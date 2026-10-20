@@ -5,6 +5,9 @@ use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, path::{Path as FsPath, PathBuf}, sync::{Arc, Mutex}};
 use uuid::Uuid;
 
+mod dashboard;
+mod evaluation;
+
 #[derive(Clone)]
 pub struct Config { pub db_path: PathBuf, pub artifact_dir: PathBuf, pub jev_local_url: String }
 #[derive(Clone)]
@@ -35,6 +38,9 @@ pub fn initialize(config: Config) -> Result<Arc<AppState>, Box<dyn std::error::E
 
 pub fn app(state: Arc<AppState>) -> Router {
     Router::new()
+       .route("/",get(dashboard::index))
+       .route("/dashboard",get(dashboard::index))
+       .route("/dashboard/datasets/:id",get(dashboard::dataset))
        .route("/health",get(|| async {Json(json!({"status":"ok"}))}))
        .route("/datasets",post(create_dataset).get(list_datasets))
        .route("/datasets/:id/samples",post(add_samples).get(list_samples))
@@ -42,7 +48,7 @@ pub fn app(state: Arc<AppState>) -> Router {
        .route("/training-jobs",post(start_job).get(list_jobs))
        .route("/training-jobs/:id",get(get_job))
        .route("/models",get(list_models))
-       .route("/evaluations",post(evaluate).get(list_evaluations))
+       .route("/evaluations",post(evaluation::evaluate).get(list_evaluations))
        .route("/deployments",post(deploy).get(list_deployments))
        .route("/v1/systemone",post(infer))
        .with_state(state)
@@ -184,25 +190,7 @@ async fn get_job(State(s):State<Arc<AppState>>,Path(id):Path<String>)->Result<Js
     Ok(Json(json!({"id":id,"dataset_id":dataset,"trainer":trainer,"status":status,"model_id":model,"error":error})))
 }
 async fn list_models(State(s):State<Arc<AppState>>)->Result<Json<Value>,ApiError>{Ok(Json(json!({"data":query_json_rows(&s.db.lock().unwrap(),"SELECT * FROM models ORDER BY created_at DESC")?})))}
-#[derive(Deserialize)]struct EvalRequest{model_id:String,dataset_id:String,#[serde(default="test_split")]split:String}
-fn test_split()->String{"test".to_string()}
 fn model_record(db:&Connection,id:&str)->Result<(String,String),ApiError>{db.query_row("SELECT kind,artifact FROM models WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(internal)?.ok_or_else(not_found)}
-async fn evaluate(State(s):State<Arc<AppState>>,Json(q):Json<EvalRequest>)->Result<Json<Value>,ApiError>{
-    if !["train","validation","test"].contains(&q.split.as_str()){return Err(bad("split must be train, validation, or test"));}
-    let (kind,artifact)={model_record(&s.db.lock().unwrap(),&q.model_id)?};
-    if kind!="naive-bayes" {return Err(bad("Laya evaluation requires a registered inference runtime; native evaluation not yet implemented"));}
-    let m:NaiveModel=serde_json::from_slice(&fs::read(&artifact).map_err(internal)?).map_err(internal)?;
-    let samples={fetch_samples(&s.db.lock().unwrap(),&q.dataset_id,Some(&q.split)).map_err(internal)?};
-    if samples.is_empty(){return Err(bad("no samples in requested evaluation split"));}
-    let mut correct=0;let mut confusion:BTreeMap<String,BTreeMap<String,u64>>=BTreeMap::new();
-    for sample in &samples {let truth=target(sample).ok_or_else(||bad("expected.vote missing"))?;let probs=predict(&m,&sample.state);
-       let predicted=probs.iter().max_by(|a,b|a.1.total_cmp(b.1)).map(|x|x.0.clone()).unwrap_or_default();
-       if predicted==truth {correct+=1;} *confusion.entry(truth).or_default().entry(predicted).or_default()+=1;
-    }
-    let result=json!({"accuracy":correct as f64/samples.len() as f64,"correct":correct,"total":samples.len(),"confusion":confusion,"model_kind":kind});
-    let id=new_id();s.db.lock().unwrap().execute("INSERT INTO evaluations VALUES (?1,?2,?3,?4,?5,?6)",params![id,q.model_id,q.dataset_id,q.split,result.to_string(),now()]).map_err(internal)?;
-    Ok(Json(json!({"id":id,"result":result})))
-}
 async fn list_evaluations(State(s):State<Arc<AppState>>)->Result<Json<Value>,ApiError>{Ok(Json(json!({"data":query_json_rows(&s.db.lock().unwrap(),"SELECT * FROM evaluations ORDER BY created_at DESC")?})))}
 #[derive(Deserialize)]struct DeployRequest{model_id:String,alias:String}
 async fn deploy(State(s):State<Arc<AppState>>,Json(q):Json<DeployRequest>)->Result<Json<Value>,ApiError>{

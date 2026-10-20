@@ -2,7 +2,7 @@
 
 An open-source **decision-model lifecycle service** in Rust: collect labeled examples, partition datasets, schedule training, evaluate on held-out examples, register versioned artifacts, and deploy a model behind a decision-style HTTP endpoint.
 
-> **v0.1 scope / important honesty:** The **fully working vertical slice uses a trainable multinomial Naive Bayes baseline**, not Laya or Jev. It is a real model trained from your dataset, not a hardcoded mock response. Laya training is an external-worker integration point only, and Laya checkpoint inference/evaluation is **not yet implemented**. This service is separate from `jev-local`; the existing `jev-local` package would need a configurable proxy target or a new provider to forward to Decision Lab. The v0.1 inference endpoint resembles the Jev choice response but **is not an exact Jev replica**. Neither implementation nor accuracy has been verified against the hosted Jev service.
+> **v0.1 scope:** Local training and deployment use a trainable multinomial Naive Bayes baseline. Decision Lab can also evaluate labeled choice datasets through a configured `jev-local` gateway, which supplies predictions from its selected provider. Laya training is an external-worker integration point; loading and deploying its checkpoints inside Decision Lab is not implemented. The v0.1 inference endpoint resembles the Jev choice response but is not an exact Jev replica. Hosted Jev inference has not been verified by the offline integration tests.
 
 ## Requirements
 
@@ -17,7 +17,11 @@ cargo test
 cargo run
 ```
 
-This starts `http://127.0.0.1:8090`. Another terminal:
+This starts `http://127.0.0.1:8090`.
+
+Open `http://127.0.0.1:8090/` in a browser for the dataset dashboard. Click a dataset to view its entries one at a time, including state, questions, expected answers, split, and group. Use Previous/Next, First/Last, or enter an entry number to navigate. Dataset pages can be bookmarked at `/dashboard/datasets/<id>?entry=1`.
+
+In another terminal:
 
 ```sh
 python scripts/demo.py
@@ -31,7 +35,52 @@ The demo performs an actual end-to-end cycle: create dataset → ingest examples
 cargo run -- --bind 127.0.0.1:8090 --db ./data/decision-lab.sqlite --artifacts ./data/artifacts
 ```
 
-You can also use `DECISION_LAB_BIND`, `DECISION_LAB_DB`, `DECISION_LAB_ARTIFACTS`, and `JEV_LOCAL_URL` environment variables. The latter is reserved for future gateway integration and currently unused.
+You can also use `DECISION_LAB_BIND`, `DECISION_LAB_DB`, `DECISION_LAB_ARTIFACTS`, and `JEV_LOCAL_URL` environment variables. `JEV_LOCAL_URL` sets the gateway used by evaluations with `"provider":"jev-local"`; it defaults to `http://127.0.0.1:8080`.
+
+## Small example with jev-local
+
+The automated integration tests start the real Decision Lab and jev-local routers on temporary localhost ports and use a temporary database. Keep the checkouts side by side (`decision-lab` and `jev-local`) because the test dependency is `../jev-local`:
+
+CI pins jev-local to commit `3ffcc93ec8b2c4ff34655f4983694a7f5fb861c6`. When updating the gateway API, update the test configuration and the pinned workflow revision together. Use that revision locally to reproduce CI.
+
+```sh
+cargo test --test jev_local -- --nocapture
+```
+
+The two labeled examples in [`examples/jev-local-smoke.jsonl`](examples/jev-local-smoke.jsonl) ask whether to open a door. The mock gateway returns uniform probabilities and selects `no` for both, so the test verifies **1/2 correct**, a saved evaluation, and no training requirement. A separate controlled HTTP fixture verifies forwarding through jev-local's Laya mode, exact sample payloads, and scoring. These offline tests exercise transport and evaluation; they do not run model inference. Expected labels are never sent to the provider. Provider errors or invalid predictions fail the evaluation without saving a partial result.
+
+To leave the example dataset in your dashboard, start jev-local in one terminal:
+
+```powershell
+# From C:\GitHub\jev-local
+cargo run -- --provider mock
+```
+
+Start Decision Lab in another:
+
+```powershell
+# From C:\GitHub\decision-lab
+$env:JEV_LOCAL_URL = "http://127.0.0.1:8080"
+cargo run
+```
+
+Then run from `decision-lab`:
+
+```sh
+python scripts/demo_jev_local.py
+```
+
+The script imports both examples with an explicit `test` split, evaluates them through Decision Lab, prints expected versus predicted labels, checks persisted results, and prints the dataset's dashboard URL. Each run creates a new dataset. Both services must already be running. This example uses an unauthenticated local gateway.
+
+For real local model inference, start Laya separately and start jev-local with `--provider laya --laya-url http://127.0.0.1:8000` instead. The same script exercises that provider; `--model` selects the forwarded model ID (default `jev-latest`). Optionally require both examples to be correct with `--min-accuracy 1`. Two examples are a smoke test, not a model quality benchmark.
+
+A Rust test automatically uses an already-running gateway when `JEV_LOCAL_URL` is set in the shell running Cargo (`JEV_LOCAL_MODEL` is optional):
+
+```sh
+cargo test --test jev_local small_dataset_with_live_jev_local -- --nocapture
+```
+
+The live test also runs during ordinary `cargo test` when `JEV_LOCAL_URL` is nonempty. Without it, the test returns early and prints `SKIP`; Rust's test harness labels that early return `ok`, so use `--nocapture` to see `RUN` or `SKIP`. Once enabled, an unavailable provider fails the test. It reports measured accuracy without imposing a quality threshold. Its external calls use whichever provider you configured in the gateway.
 
 ## API
 
@@ -44,7 +93,7 @@ You can also use `DECISION_LAB_BIND`, `DECISION_LAB_DB`, `DECISION_LAB_ARTIFACTS
 | POST / GET | `/training-jobs` | Queue/list jobs (`mock`, experimental `laya`) |
 | GET | `/training-jobs/{id}` | Job status and result |
 | GET | `/models` | Registry listing |
-| POST / GET | `/evaluations` | Held-out accuracy and confusion counts (baseline only) |
+| POST / GET | `/evaluations` | Accuracy, confusion counts, and per-entry predictions (baseline or jev-local) |
 | POST / GET | `/deployments` | Set/list named model aliases (baseline only) |
 | POST | `/v1/systemone` | Single-question `vote` inference (baseline only) |
 
@@ -79,6 +128,8 @@ Training example: `POST /training-jobs` with `{"dataset_id":"<id>","trainer":"mo
 
 Evaluate: `POST /evaluations` with `{"dataset_id":"<id>","model_id":"<id>","split":"test"}`.
 
+Evaluate through jev-local: `POST /evaluations` with `{"dataset_id":"<id>","model_id":"jev-latest","provider":"jev-local","split":"test"}`. Here `model_id` is the upstream model ID and does not need a local model registration. The default provider is `local`, which uses a registered baseline model. Gateway evaluation currently supports exactly one named `vote` question of type `choice` with string `expected.vote` labels.
+
 Deploy: `POST /deployments` with `{"model_id":"<id>","alias":"door-v1"}`.
 
 Infer: `POST /v1/systemone` with `{"model":"door-v1","state":"Open it!","questions":{"vote":{"type":"choice","instructions":"Choose","criteria":{"yes":"yes","no":"no","irrelevant":"irrelevant"}}}}`.
@@ -94,7 +145,7 @@ Infer: `POST /v1/systemone` with `{"model":"door-v1","state":"Open it!","questio
 - No API authentication: bind to localhost only. Do not expose it on the public internet.
 - Job execution uses an in-process Tokio task. Training status survives in SQLite, but interrupted tasks are **not automatically resumed** after a restart.
 - SQLite and local artifact files are single-machine storage; no distributed worker queue.
-- Evaluation can target only registered Naive Bayes models. No accuracy claims for Laya.
+- Evaluation supports registered Naive Bayes models or `vote` choice predictions through jev-local. Running a model through the gateway does not train or deploy it inside Decision Lab.
 - No automatic model rollback, no production-grade serving management, no telemetry or precision/recall/F1 yet.
 - Registrations and deployments use immutable model files plus replaceable aliases, but deletion and retention controls are not implemented.
 - This implementation is a prototype for learning MLOps architecture, not an industrial control system.
@@ -103,7 +154,7 @@ Infer: `POST /v1/systemone` with `{"model":"door-v1","state":"Open it!","questio
 
 1. Pin an upstream Laya release and implement/test the actual training worker and inference checkpoint loader.
 2. Add an adapter to `jev-local` so deployment through its existing `/v1/systemone` gateway is real.
-3. Implement evaluation through the common gateway for Laya and optional hosted Jev, with latency and calibration metrics.
+3. Expand gateway evaluation beyond one `vote` choice question, with latency and calibration metrics.
 4. Add queue recovery, authorization, provenance hashing, robust dataset validation and split leakage checks.
 5. Add JevAny LoRA worker and compare checkpoints on identical datasets.
 
