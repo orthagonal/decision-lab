@@ -286,9 +286,17 @@ async fn validates_the_whole_split_before_calling_the_gateway() {
 }
 
 #[tokio::test]
-#[ignore = "requires an already-running jev-local; set JEV_LOCAL_URL and optionally JEV_LOCAL_MODEL"]
 async fn small_dataset_with_live_jev_local() {
-    let gateway = std::env::var("JEV_LOCAL_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
+    let gateway = match std::env::var("JEV_LOCAL_URL") {
+        Ok(url) if !url.trim().is_empty() => url.trim().to_owned(),
+        _ => {
+            println!(
+                "SKIP: live jev-local test requires JEV_LOCAL_URL in the test process environment"
+            );
+            return;
+        }
+    };
+    println!("RUN: live jev-local evaluation using JEV_LOCAL_URL");
     let model = std::env::var("JEV_LOCAL_MODEL").unwrap_or_else(|_| "jev-latest".into());
     let lab = Lab::start(&gateway).await;
     let id = lab.dataset(examples()).await;

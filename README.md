@@ -72,13 +72,13 @@ The script imports both examples with an explicit `test` split, evaluates them t
 
 For real local model inference, start Laya separately and start jev-local with `--provider laya --laya-url http://127.0.0.1:8000` instead. The same script exercises that provider; `--model` selects the forwarded model ID (default `jev-latest`). Optionally require both examples to be correct with `--min-accuracy 1`. Two examples are a smoke test, not a model quality benchmark.
 
-A Rust test can also use an already-running gateway (`JEV_LOCAL_URL`, optional `JEV_LOCAL_MODEL`):
+A Rust test automatically uses an already-running gateway when `JEV_LOCAL_URL` is set in the shell running Cargo (`JEV_LOCAL_MODEL` is optional):
 
 ```sh
-cargo test --test jev_local small_dataset_with_live_jev_local -- --ignored --nocapture
+cargo test --test jev_local small_dataset_with_live_jev_local -- --nocapture
 ```
 
-This test is explicitly ignored by default. When requested, it fails if the provider is unavailable and reports its measured accuracy without imposing a quality threshold. Its external calls use whichever provider you configured in the gateway.
+The live test also runs during ordinary `cargo test` when `JEV_LOCAL_URL` is nonempty. Without it, the test returns early and prints `SKIP`; Rust's test harness labels that early return `ok`, so use `--nocapture` to see `RUN` or `SKIP`. Once enabled, an unavailable provider fails the test. It reports measured accuracy without imposing a quality threshold. Its external calls use whichever provider you configured in the gateway.
 
 ## API
 
