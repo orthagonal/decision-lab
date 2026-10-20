@@ -3,8 +3,19 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: decision-lab
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out decision-lab
+        uses: actions/checkout@v4
+        with:
+          path: decision-lab
+      - name: Check out jev-local
+        uses: actions/checkout@v4
+        with:
+          repository: orthagonal/jev-local
+          path: jev-local
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
