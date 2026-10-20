@@ -41,6 +41,8 @@ You can also use `DECISION_LAB_BIND`, `DECISION_LAB_DB`, `DECISION_LAB_ARTIFACTS
 
 The automated integration tests start the real Decision Lab and jev-local routers on temporary localhost ports and use a temporary database. Keep the checkouts side by side (`decision-lab` and `jev-local`) because the test dependency is `../jev-local`:
 
+CI pins jev-local to commit `3ffcc93ec8b2c4ff34655f4983694a7f5fb861c6`. When updating the gateway API, update the test configuration and the pinned workflow revision together. Use that revision locally to reproduce CI.
+
 ```sh
 cargo test --test jev_local -- --nocapture
 ```

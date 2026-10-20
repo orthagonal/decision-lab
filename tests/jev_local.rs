@@ -31,6 +31,7 @@ fn gateway_config(backend: jev_local::Backend, upstream: &str) -> jev_local::Con
         jev_key: None,
         gateway_key: None,
         benchmark_dataset_dir: None,
+        registry: None,
     }
 }
 
