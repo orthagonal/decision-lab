@@ -1,0 +1,2 @@
+{"state":"Please open the door.","questions":{"vote":{"type":"choice","instructions":"Does the speaker want the door opened?","criteria":{"yes":"Open the door","no":"Keep the door closed"}}},"expected":{"vote":"yes"},"split":"test","group_id":"open"}
+{"state":"Keep the door closed.","questions":{"vote":{"type":"choice","instructions":"Does the speaker want the door opened?","criteria":{"yes":"Open the door","no":"Keep the door closed"}}},"expected":{"vote":"no"},"split":"test","group_id":"closed"}
